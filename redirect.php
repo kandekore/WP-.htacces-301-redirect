@@ -13,13 +13,14 @@ function redirect_manager_menu() {
 add_action('admin_menu', 'redirect_manager_menu');
 
 function redirect_manager_page() {
-    global $wpdb;
-
-    // Check nonce for security
-    check_admin_referer('301_redirect_manager_update');
+     global $wpdb;
 
     // Add handling
     if (isset($_POST['old_url']) && isset($_POST['new_url'])) {
+
+        // Check nonce for security
+        check_admin_referer('301_redirect_manager_update');
+
         $old_url = esc_url_raw($_POST['old_url']);
         $new_url = esc_url_raw($_POST['new_url']);
 
@@ -34,6 +35,10 @@ function redirect_manager_page() {
 
     // Remove handling
     if (isset($_POST['remove_redirect'])) {
+
+        // Check nonce for security
+        check_admin_referer('301_redirect_manager_update');
+
         // Remove from the database
         $wpdb->delete($wpdb->prefix . 'redirect_manager', ['id' => $_POST['remove_redirect']]);
     }
@@ -45,28 +50,38 @@ function redirect_manager_page() {
     }, $redirects);
     insert_with_markers(get_home_path() . '.htaccess', '# 301 Redirects Manager', $htaccess_lines);
 
+
     // Redirects list
     $redirects = $wpdb->get_results("SELECT * FROM " . $wpdb->prefix . "redirect_manager");
     echo '<h2>Stored Redirects</h2>';
     echo '<table class="widefat fixed" cellspacing="0">';
     echo '<thead><tr><th>Redirects</th><th>Actions</th></tr></thead>';
     echo '<tbody>';
-    foreach ($redirects as $redirect) {
-        echo '<tr>';
-        echo '<td>';
-        echo '<a href="' . get_home_url() . substr(explode(' ', esc_html($redirect->redirect))[1], 1) . '" target="_blank">';
-        echo esc_html($redirect->redirect);
-        echo '</a>';
-        echo '</td>';
-        echo '<td>';
-        echo '<form method="POST">';
-        wp_nonce_field('301_redirect_manager_update');
-        echo '<input type="hidden" name="remove_redirect" value="' . esc_attr($redirect->id) . '">';
-        echo '<input type="submit" value="Remove">';
-        echo '</form>';
-        echo '</td>';
-        echo '</tr>';
-    }
+   foreach ($redirects as $redirect) {
+    echo '<tr>';
+    echo '<td>';
+
+    $parts = explode(' ', $redirect->redirect);
+    $old_path = trim($parts[2]);
+    $old_url = get_home_url() . $old_path;
+
+    echo '<a href="' . esc_url($old_url) . '" target="_blank">';
+    echo esc_html($redirect->redirect);
+    echo '</a>';
+
+    echo '</td>';
+    echo '<td>';
+
+    echo '<form method="POST">';
+    wp_nonce_field('301_redirect_manager_update');
+    echo '<input type="hidden" name="remove_redirect" value="' . esc_attr($redirect->id) . '">';
+    echo '<input type="submit" value="Remove">';
+    echo '</form>';
+
+    echo '</td>';
+    echo '</tr>';
+}
+
     echo '</tbody>';
     echo '</table>';
 
