@@ -6,129 +6,93 @@
  * Author: D.Kandekore
  */
 
-function wp301_admin_menu() {
-    add_submenu_page(
-        'options-general.php',
-        '301 Redirects',
-        '301 Redirects',
-        'manage_options',
-        'wp301-redirects',
-        'wp301_redirects_page'
-    );
+// Add a new submenu under Settings
+function redirect_manager_menu() {
+    add_options_page('301 Redirects Manager', 'Redirects Manager', 'manage_options', '301-redirects-manager', 'redirect_manager_page');
 }
-add_action('admin_menu', 'wp301_admin_menu');
+add_action('admin_menu', 'redirect_manager_menu');
 
-function wp301_redirects_page() {
+function redirect_manager_page() {
     global $wpdb;
-    $table_name = $wpdb->prefix . '301redirects';
 
-    // Handling redirect removal
-    if (isset($_POST['remove_redirect'])) {
-        $id = intval($_POST['remove_redirect']);
-        $redirect = $wpdb->get_var($wpdb->prepare("SELECT redirect FROM $table_name WHERE id = %d", $id));
-        
-        $wpdb->delete($table_name, array('id' => $id));
-        
-        $htaccess_file = ABSPATH . '.htaccess';
-        $contents = explode("\n", file_get_contents($htaccess_file));
-        $contents = array_diff($contents, array($redirect));
-        insert_with_markers($htaccess_file, 'WP 301 Redirects', $contents);
-    }
-
+    // Form handling
     if (isset($_POST['old_url']) && isset($_POST['new_url'])) {
-        $old_url = sanitize_text_field($_POST['old_url']);
-        $new_url = sanitize_text_field($_POST['new_url']);
+        // Use wp_make_link_relative to get a relative URL
+        $old_path = wp_make_link_relative($_POST['old_url']);
+        $new_path = wp_make_link_relative($_POST['new_url']);
 
-        // Ensure the URL is valid
-        if (!filter_var($old_url, FILTER_VALIDATE_URL) || !filter_var($new_url, FILTER_VALIDATE_URL)) {
-            echo '<p>Invalid URL provided.</p>';
-            return;
-        }
+        // Add the redirect to the .htaccess file
+        insert_with_markers(get_home_path() . '.htaccess', '# 301 Redirects Manager',
+            ["Redirect 301 " . $old_path . " " . $new_path]);
 
-        // Standardize URLs to relative format
-        $old_path = wp_parse_url($old_url, PHP_URL_PATH);
-        $new_path = wp_parse_url($new_url, PHP_URL_PATH);
-
-        // Check for cyclic redirects
-        $existing_redirect = $wpdb->get_row("SELECT * FROM $table_name WHERE redirect LIKE '%$old_path%'");
-        if ($existing_redirect && strpos($existing_redirect->redirect, $new_path) !== false) {
-            echo '<p>Cyclic redirect detected. Please enter a different URL.</p>';
-            return;
-        }
-
-        $redirect = "Redirect 301 $old_path $new_path\n";
-
-        // Ensure the redirect does not already exist
-        $existing_redirects = $wpdb->get_results("SELECT * FROM $table_name WHERE redirect = '$redirect'");
-        if (!empty($existing_redirects)) {
-            echo '<p>Redirect already exists.</p>';
-            return;
-        }
-
-        // Attempt to update .htaccess file
-        $htaccess_file = ABSPATH . '.htaccess';
-        if (!is_writable($htaccess_file)) {
-            echo '<p>.htaccess file is not writable. Please change the file permissions to allow the plugin to write to it.</p>';
-            return;
-        }
-
-        // Check number of existing redirects and limit for performance
-        $redirect_count = $wpdb->get_var("SELECT COUNT(*) FROM $table_name");
-        if ($redirect_count >= 100) {  // adjust limit as needed
-            echo '<p>The maximum number of redirects has been reached. Please delete some before adding more.</p>';
-            return;
-        }
-
-        // If all checks pass, add the redirect
-        $wpdb->insert($table_name, array('redirect' => $redirect));
-        insert_with_markers($htaccess_file, 'WP 301 Redirects', array($redirect));
+        // Save the redirect to the database
+        $wpdb->insert($wpdb->prefix . 'redirect_manager',
+            ['redirect' => "Redirect 301 " . $old_path . " " . $new_path]);
     }
 
-    $redirects = $wpdb->get_results("SELECT * FROM $table_name");
+    // Removal handling
+    if (isset($_POST['remove_redirect'])) {
+        // Remove from the database
+        $redirect = $wpdb->get_row($wpdb->prepare("SELECT * FROM " . $wpdb->prefix . "redirect_manager WHERE id = %d", $_POST['remove_redirect']));
+        $wpdb->delete($wpdb->prefix . 'redirect_manager', ['id' => $_POST['remove_redirect']]);
+
+        // Remove from the .htaccess file
+        $htaccess = file(get_home_path() . '.htaccess');
+        $lines = array_filter($htaccess, function($line) use ($redirect) {
+            return trim($line) !== $redirect->redirect;
+        });
+        insert_with_markers(get_home_path() . '.htaccess', '# 301 Redirects Manager', $lines);
+    }
+
+    // Display
+    $redirects = $wpdb->get_results("SELECT * FROM " . $wpdb->prefix . "redirect_manager");
     ?>
-
-    <h1>301 Redirect Generator</h1>
-    <form method="post">
-        <label for="old_url">Old URL:</label><br>
-        <input type="text" id="old_url" name="old_url"><br>
-        <label for="new_url">New URL:</label><br>
-        <input type="text" id="new_url" name="new_url"><br>
-        <input type="submit" value="Generate">
-    </form>
-    <h2>Stored Redirects:</h2>
-    <?php foreach ($redirects as $redirect) : ?>
-        <p>
-            <?php 
-                $parts = explode(' ', $redirect->redirect);
-                $old_path = trim($parts[2]);
-                $old_url = get_home_url() . $old_path;
-            ?>
-            <a href="<?php echo esc_url($old_url); ?>" target="_blank">
-                <?php echo esc_html($redirect->redirect); ?>
-            </a>
-            <form method="post" style="display:inline;">
-                <input type="hidden" name="remove_redirect" value="<?php echo $redirect->id; ?>">
-                <input type="submit" value="Remove">
-            </form>
-        </p>
-    <?php endforeach; ?>
-
+    <div class="wrap">
+        <h1>301 Redirects Manager</h1>
+        <form method="post">
+            <label for="old_url">Old URL:</label><br>
+            <input type="text" id="old_url" name="old_url" required><br>
+            <label for="new_url">New URL:</label><br>
+            <input type="text" id="new_url" name="new_url" required><br>
+            <input type="submit" value="Add Redirect">
+        </form>
+        <h2>Stored Redirects:</h2>
+        <?php foreach ($redirects as $redirect) : ?>
+            <p>
+                <?php 
+                    $parts = explode(' ', $redirect->redirect);
+                    $old_path = trim($parts[2]);
+                    $old_url = get_home_url(null, $old_path);
+                ?>
+                <a href="<?php echo esc_url($old_url); ?>" target="_blank">
+                    <?php echo esc_html($redirect->redirect); ?>
+                </a>
+                <form method="post" style="display:inline;">
+                    <input type="hidden" name="remove_redirect" value="<?php echo $redirect->id; ?>">
+                    <input type="submit" value="Remove">
+                </form>
+            </p>
+        <?php endforeach; ?>
+    </div>
     <?php
 }
 
-function wp301_install() {
+// Create table for storing redirects
+function redirect_manager_install() {
     global $wpdb;
-    $table_name = $wpdb->prefix . '301redirects';
+    $charset_collate = $wpdb->get_charset_collate();
+    $table_name = $wpdb->prefix . 'redirect_manager';
+
     if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") != $table_name) {
-        $sql = "CREATE TABLE $table_name (
-            id mediumint(9) NOT NULL AUTO_INCREMENT,
-            redirect text NOT NULL,
-            PRIMARY KEY  (id)
-        );";
+        // table not in database. Create new table
+        $sql = "CREATE TABLE `$table_name` (
+            `id` int(11) NOT NULL AUTO_INCREMENT,
+            `redirect` text NOT NULL,
+            PRIMARY KEY (`id`)
+         ) $charset_collate;";
+
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($sql);
     }
 }
-register_activation_hook(__FILE__, 'wp301_install');
-
-?>
+register_activation_hook(__FILE__, 'redirect_manager_install');
