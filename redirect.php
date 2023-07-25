@@ -22,6 +22,19 @@ function wp301_redirects_page() {
     global $wpdb;
     $table_name = $wpdb->prefix . '301redirects';
 
+    // Handling redirect removal
+    if (isset($_POST['remove_redirect'])) {
+        $id = intval($_POST['remove_redirect']);
+        $redirect = $wpdb->get_var($wpdb->prepare("SELECT redirect FROM $table_name WHERE id = %d", $id));
+        
+        $wpdb->delete($table_name, array('id' => $id));
+        
+        $htaccess_file = ABSPATH . '.htaccess';
+        $contents = explode("\n", file_get_contents($htaccess_file));
+        $contents = array_diff($contents, array($redirect));
+        insert_with_markers($htaccess_file, 'WP 301 Redirects', $contents);
+    }
+
     if (isset($_POST['old_url']) && isset($_POST['new_url'])) {
         $old_url = sanitize_text_field($_POST['old_url']);
         $new_url = sanitize_text_field($_POST['new_url']);
@@ -84,7 +97,20 @@ function wp301_redirects_page() {
     </form>
     <h2>Stored Redirects:</h2>
     <?php foreach ($redirects as $redirect) : ?>
-        <p><?php echo esc_html($redirect->redirect); ?></p>
+        <p>
+            <?php 
+                $parts = explode(' ', $redirect->redirect);
+                $old_path = trim($parts[2]);
+                $old_url = get_home_url() . $old_path;
+            ?>
+            <a href="<?php echo esc_url($old_url); ?>" target="_blank">
+                <?php echo esc_html($redirect->redirect); ?>
+            </a>
+            <form method="post" style="display:inline;">
+                <input type="hidden" name="remove_redirect" value="<?php echo $redirect->id; ?>">
+                <input type="submit" value="Remove">
+            </form>
+        </p>
     <?php endforeach; ?>
 
     <?php
@@ -104,3 +130,5 @@ function wp301_install() {
     }
 }
 register_activation_hook(__FILE__, 'wp301_install');
+
+?>
